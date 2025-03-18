@@ -1,0 +1,536 @@
+##########################################
+# TEST CRICKET QUERIES
+##########################################
+
+Query 1 : Highest batting averages in Test cricket (min 20 innings)
+
+    SELECT 
+        batter, 
+        COUNT(DISTINCT match_id) AS matches,
+        COUNT(*) AS innings,
+        SUM(runs_batter) AS runs, 
+        SUM(CASE WHEN wicket_player_out = batter THEN 1 ELSE 0 END) AS dismissals,
+        ROUND(SUM(runs_batter) / NULLIF(SUM(CASE WHEN wicket_player_out = batter THEN 1 ELSE 0 END), 0), 2) AS average
+    FROM 
+        test_deliveries
+    GROUP BY 
+        batter
+    HAVING 
+        innings >= 20 AND
+        batter != '' AND
+        average IS NOT NULL
+    ORDER BY 
+        average DESC
+    LIMIT 10
+
+Query 2 : Top 10 best bowling figures in an innings in Test cricket
+
+    SELECT 
+        match_id, 
+        bowler, 
+        innings_number,
+        SUM(CASE WHEN wicket_player_out != '' AND wicket_kind NOT IN ('run out', 'retired hurt') THEN 1 ELSE 0 END) AS wickets,
+        SUM(runs_batter) AS runs_conceded,
+        CONCAT(SUM(CASE WHEN wicket_player_out != '' AND wicket_kind NOT IN ('run out', 'retired hurt') THEN 1 ELSE 0 END), 
+               '/', SUM(runs_batter)) AS bowling_figures
+    FROM 
+        test_deliveries
+    GROUP BY 
+        match_id, bowler, innings_number
+    HAVING 
+        wickets >= 5
+    ORDER BY 
+        wickets DESC, runs_conceded ASC
+    LIMIT 10
+
+Query 3 : Most draws in Test cricket by venue
+
+    SELECT 
+        venue, 
+        COUNT(*) AS total_matches,
+        SUM(CASE WHEN outcome_result = 'draw' THEN 1 ELSE 0 END) AS draws,
+        ROUND(SUM(CASE WHEN outcome_result = 'draw' THEN 1 ELSE 0 END) / COUNT(*) * 100, 2) AS draw_percentage
+    FROM 
+        test_matches
+    GROUP BY 
+        venue
+    HAVING 
+        total_matches >= 5
+    ORDER BY 
+        draw_percentage DESC, total_matches DESC
+    LIMIT 10
+
+Query 4 : Declared innings analysis in Test cricket
+
+    SELECT 
+        tm.team1,
+        tm.team2,
+        ti.team AS batting_team,
+        ti.declared,
+        tm.outcome_winner,
+        CASE 
+            WHEN tm.outcome_winner = ti.team THEN 'Won' 
+            WHEN tm.outcome_winner != '' AND tm.outcome_winner != ti.team THEN 'Lost'
+            ELSE 'Draw'
+        END AS result_after_declaration
+    FROM 
+        test_innings ti
+    JOIN 
+        test_matches tm ON ti.match_id = tm.match_id
+    WHERE 
+        ti.declared = 1
+    ORDER BY 
+        tm.date DESC
+    LIMIT 10
+
+Query 5 : Longest partnerships in Test cricket
+
+    WITH ball_count AS (
+        SELECT 
+            match_id, 
+            innings_number, 
+            batter, 
+            non_striker,
+            COUNT(*) AS balls_faced,
+            SUM(runs_batter) AS runs_scored
+        FROM 
+            test_deliveries
+        GROUP BY 
+            match_id, innings_number, batter, non_striker
+        HAVING 
+            balls_faced >= 60  -- At least 10 overs (60 balls)
+    )
+    SELECT 
+        bc.match_id,
+        tm.team1,
+        tm.team2,
+        bc.innings_number,
+        bc.batter,
+        bc.non_striker,
+        bc.balls_faced,
+        bc.runs_scored,
+        ROUND(bc.runs_scored / bc.balls_faced * 100, 2) AS strike_rate
+    FROM 
+        ball_count bc
+    JOIN 
+        test_matches tm ON bc.match_id = tm.match_id
+    ORDER BY 
+        bc.balls_faced DESC, bc.runs_scored DESC
+    LIMIT 10
+
+##########################################
+# ODI CRICKET QUERIES
+##########################################
+
+Query 1 : Top 10 highest team totals in ODI cricket
+
+    WITH innings_runs AS (
+        SELECT 
+            match_id, 
+            innings_number, 
+            team,
+            SUM(runs_total) AS total_runs
+        FROM 
+            odi_deliveries
+        GROUP BY 
+            match_id, innings_number, team
+    )
+    SELECT 
+        ir.match_id,
+        om.date,
+        om.team1,
+        om.team2,
+        ir.team AS batting_team,
+        ir.total_runs AS team_total,
+        ir.innings_number,
+        om.winner
+    FROM 
+        innings_runs ir
+    JOIN 
+        odi_matches om ON ir.match_id = om.match_id
+    ORDER BY 
+        ir.total_runs DESC
+    LIMIT 10
+
+Query 2 : Highest strike rates in ODI cricket (min 500 runs)
+
+    SELECT 
+        batter, 
+        COUNT(DISTINCT match_id) AS matches,
+        SUM(runs_batter) AS runs,
+        COUNT(*) AS balls_faced,
+        ROUND(SUM(runs_batter) / COUNT(*) * 100, 2) AS strike_rate
+    FROM 
+        odi_deliveries
+    GROUP BY 
+        batter
+    HAVING 
+        runs >= 500 AND 
+        batter != ''
+    ORDER BY 
+        strike_rate DESC
+    LIMIT 10
+
+Query 3 : Best death bowlers in ODI cricket (Economy rate in last 10 overs)
+
+    SELECT 
+        bowler,
+        COUNT(DISTINCT match_id) AS matches,
+        COUNT(*) AS balls_bowled,
+        SUM(runs_total) AS runs_conceded,
+        ROUND(SUM(runs_total) / (COUNT(*) / 6), 2) AS economy_rate,
+        SUM(CASE WHEN wicket_player_out != '' AND wicket_kind NOT IN ('run out', 'retired hurt') THEN 1 ELSE 0 END) AS wickets
+    FROM 
+        odi_deliveries
+    WHERE 
+        over_number >= 40 AND
+        bowler != ''
+    GROUP BY 
+        bowler
+    HAVING 
+        balls_bowled >= 120  -- At least 20 overs (120 balls)
+    ORDER BY 
+        economy_rate ASC
+    LIMIT 10
+
+Query 4 : Impact of winning toss on match results in ODI cricket
+
+    SELECT 
+        toss_decision,
+        COUNT(*) AS total_matches,
+        SUM(CASE WHEN toss_winner = winner THEN 1 ELSE 0 END) AS toss_winner_won,
+        ROUND(SUM(CASE WHEN toss_winner = winner THEN 1 ELSE 0 END) / COUNT(*) * 100, 2) AS win_percentage
+    FROM 
+        odi_matches
+    WHERE 
+        toss_winner != '' AND 
+        winner != '' AND
+        result != 'no result' AND
+        result != 'tie'
+    GROUP BY 
+        toss_decision
+    ORDER BY 
+        win_percentage DESC
+
+Query 5 : Analysis of matches decided by DLS method in ODI cricket
+
+    SELECT 
+        season,
+        COUNT(*) AS total_matches,
+        SUM(CASE WHEN method = 'D/L' OR method = 'DLS' THEN 1 ELSE 0 END) AS dls_matches,
+        ROUND(SUM(CASE WHEN method = 'D/L' OR method = 'DLS' THEN 1 ELSE 0 END) / COUNT(*) * 100, 2) AS dls_percentage
+    FROM 
+        odi_matches
+    GROUP BY 
+        season
+    HAVING 
+        season != '' AND total_matches >= 5
+    ORDER BY 
+        season DESC
+    LIMIT 15
+
+##########################################
+# T20 CRICKET QUERIES
+##########################################
+
+Query 1 : Highest powerplay run rates in T20 cricket (first 6 overs)
+
+    SELECT 
+        d.match_id,
+        d.team,
+        m.date,
+        m.venue,
+        COUNT(*) AS balls,
+        SUM(d.runs_total) AS runs,
+        ROUND(SUM(d.runs_total) / (COUNT(*) / 6), 2) AS run_rate
+    FROM 
+        t20_deliveries d
+    JOIN 
+        t20_matches m ON d.match_id = m.match_id
+    WHERE 
+        d.over_number < 6
+    GROUP BY 
+        d.match_id, d.team, m.date, m.venue
+    HAVING 
+        balls >= 30  -- At least 5 overs (30 balls)
+    ORDER BY 
+        run_rate DESC
+    LIMIT 10
+
+Query 2 : Most boundaries in T20 cricket
+
+    SELECT 
+        batter,
+        COUNT(DISTINCT match_id) AS matches,
+        SUM(CASE WHEN runs_batter = 4 THEN 1 ELSE 0 END) AS fours,
+        SUM(CASE WHEN runs_batter = 6 THEN 1 ELSE 0 END) AS sixes,
+        SUM(CASE WHEN runs_batter = 4 OR runs_batter = 6 THEN 1 ELSE 0 END) AS total_boundaries,
+        ROUND(SUM(CASE WHEN runs_batter = 4 OR runs_batter = 6 THEN 1 ELSE 0 END) / COUNT(DISTINCT match_id), 2) AS boundaries_per_match
+    FROM 
+        t20_deliveries
+    WHERE 
+        batter != ''
+    GROUP BY 
+        batter
+    HAVING 
+        matches >= 10
+    ORDER BY 
+        total_boundaries DESC
+    LIMIT 10
+
+Query 3 : Super over analysis in T20 cricket
+
+    SELECT 
+        i.match_id,
+        m.date,
+        m.team1,
+        m.team2,
+        i.team AS batting_team,
+        SUM(d.runs_total) AS super_over_runs,
+        SUM(CASE WHEN d.wicket_player_out != '' THEN 1 ELSE 0 END) AS wickets_lost,
+        m.winner
+    FROM 
+        t20_innings i
+    JOIN 
+        t20_deliveries d ON i.match_id = d.match_id AND i.innings_number = d.innings_number
+    JOIN 
+        t20_matches m ON i.match_id = m.match_id
+    WHERE 
+        i.super_over = 1
+    GROUP BY 
+        i.match_id, m.date, m.team1, m.team2, i.team, m.winner
+    ORDER BY 
+        super_over_runs DESC
+
+Query 4 : Best venues for scoring in T20 cricket
+
+    WITH match_totals AS (
+        SELECT 
+            d.match_id,
+            m.venue,
+            SUM(d.runs_total) AS match_runs
+        FROM 
+            t20_deliveries d
+        JOIN 
+            t20_matches m ON d.match_id = m.match_id
+        GROUP BY 
+            d.match_id, m.venue
+    ),
+    venue_stats AS (
+        SELECT 
+            venue,
+            COUNT(DISTINCT match_id) AS matches,
+            ROUND(AVG(match_runs), 2) AS avg_match_runs,
+            MAX(match_runs) AS highest_match_total
+        FROM 
+            match_totals
+        GROUP BY 
+            venue
+        HAVING 
+            matches >= 5
+    )
+    SELECT *
+    FROM venue_stats
+    ORDER BY avg_match_runs DESC
+    LIMIT 10
+
+Query 5 : Best death bowlers in T20 cricket (last 5 overs)
+
+    SELECT 
+        bowler,
+        COUNT(DISTINCT match_id) AS matches,
+        COUNT(*) AS balls_bowled,
+        SUM(runs_total) AS runs_conceded,
+        ROUND(SUM(runs_total) / (COUNT(*) / 6), 2) AS economy_rate,
+        SUM(CASE WHEN wicket_player_out != '' AND wicket_kind NOT IN ('run out', 'retired hurt') THEN 1 ELSE 0 END) AS wickets,
+        ROUND(COUNT(*) / SUM(CASE WHEN wicket_player_out != '' AND wicket_kind NOT IN ('run out', 'retired hurt') THEN 1 ELSE 0 END), 2) AS strike_rate
+    FROM 
+        t20_deliveries
+    WHERE 
+        over_number >= 15 AND
+        bowler != ''
+    GROUP BY 
+        bowler
+    HAVING 
+        balls_bowled >= 60 AND  -- At least 10 overs (60 balls)
+        wickets >= 10
+    ORDER BY 
+        economy_rate ASC
+    LIMIT 10
+
+##########################################
+# IPL CRICKET QUERIES
+##########################################
+
+Query 1 : Most valuable IPL players (combining batting and bowling performance)
+
+    WITH batting_stats AS (
+        SELECT 
+            batter AS player,
+            COUNT(DISTINCT match_id) AS matches,
+            SUM(runs_batter) AS runs,
+            ROUND(SUM(runs_batter) / COUNT(DISTINCT match_id), 2) AS batting_avg
+        FROM 
+            ipl_deliveries
+        WHERE 
+            batter != ''
+        GROUP BY 
+            batter
+        HAVING 
+            matches >= 10
+    ),
+    bowling_stats AS (
+        SELECT 
+            bowler AS player,
+            COUNT(DISTINCT match_id) AS matches,
+            SUM(CASE WHEN wicket_player_out != '' AND wicket_kind NOT IN ('run out', 'retired hurt') THEN 1 ELSE 0 END) AS wickets,
+            ROUND(SUM(CASE WHEN wicket_player_out != '' AND wicket_kind NOT IN ('run out', 'retired hurt') THEN 1 ELSE 0 END) / COUNT(DISTINCT match_id), 2) AS bowling_avg
+        FROM 
+            ipl_deliveries
+        WHERE 
+            bowler != ''
+        GROUP BY 
+            bowler
+        HAVING 
+            matches >= 10
+    ),
+    combined_players AS (
+        SELECT player FROM batting_stats
+        UNION
+        SELECT player FROM bowling_stats
+    )
+    SELECT 
+        cp.player,
+        COALESCE(bat.matches, 0) AS batting_matches,
+        COALESCE(bat.runs, 0) AS total_runs,
+        COALESCE(bat.batting_avg, 0) AS runs_per_match,
+        COALESCE(bowl.matches, 0) AS bowling_matches,
+        COALESCE(bowl.wickets, 0) AS total_wickets,
+        COALESCE(bowl.bowling_avg, 0) AS wickets_per_match,
+        COALESCE(bat.batting_avg, 0) + COALESCE(bowl.bowling_avg * 15, 0) AS value_index
+    FROM 
+        combined_players cp
+    LEFT JOIN 
+        batting_stats bat ON cp.player = bat.player
+    LEFT JOIN 
+        bowling_stats bowl ON cp.player = bowl.player
+    WHERE 
+        COALESCE(bat.runs, 0) > 0 OR COALESCE(bowl.wickets, 0) > 0
+    ORDER BY 
+        value_index DESC
+    LIMIT 15
+
+Query 2 : IPL team performance by season
+
+    SELECT 
+        season,
+        team1 AS team,
+        COUNT(*) AS matches,
+        SUM(CASE WHEN team1 = winner THEN 1 ELSE 0 END) AS wins,
+        ROUND(SUM(CASE WHEN team1 = winner THEN 1 ELSE 0 END) / COUNT(*) * 100, 2) AS win_percentage
+    FROM 
+        ipl_matches
+    GROUP BY 
+        season, team1
+    HAVING 
+        matches >= 5
+    UNION
+    SELECT 
+        season,
+        team2 AS team,
+        COUNT(*) AS matches,
+        SUM(CASE WHEN team2 = winner THEN 1 ELSE 0 END) AS wins,
+        ROUND(SUM(CASE WHEN team2 = winner THEN 1 ELSE 0 END) / COUNT(*) * 100, 2) AS win_percentage
+    FROM 
+        ipl_matches
+    GROUP BY 
+        season, team2
+    HAVING 
+        matches >= 5
+    ORDER BY 
+        season, win_percentage DESC
+
+Query 3 : Powerplay analysis in IPL - best teams during powerplay
+
+    WITH powerplay_batting AS (
+        SELECT 
+            d.match_id,
+            i.team,
+            m.season,
+            SUM(d.runs_total) AS powerplay_runs,
+            SUM(CASE WHEN d.wicket_player_out != '' THEN 1 ELSE 0 END) AS powerplay_wickets
+        FROM 
+            ipl_deliveries d
+        JOIN 
+            ipl_innings i ON d.match_id = i.match_id AND d.innings_number = i.innings_number
+        JOIN 
+            ipl_matches m ON d.match_id = m.match_id
+        JOIN 
+            ipl_powerplays p ON d.match_id = p.match_id AND d.innings_number = p.innings_number
+        WHERE 
+            p.powerplay_type = 'mandatory' AND
+            d.over_number < 6
+        GROUP BY 
+            d.match_id, i.team, m.season
+    )
+    SELECT 
+        team,
+        season,
+        COUNT(*) AS matches,
+        ROUND(AVG(powerplay_runs), 2) AS avg_powerplay_runs,
+        ROUND(AVG(powerplay_wickets), 2) AS avg_powerplay_wickets,
+        ROUND(AVG(powerplay_runs) / 6, 2) AS run_rate
+    FROM 
+        powerplay_batting
+    GROUP BY 
+        team, season
+    HAVING 
+        matches >= 5
+    ORDER BY 
+        season DESC, run_rate DESC
+
+Query 4 : Best IPL finishers (batting in the last 5 overs)
+
+    SELECT 
+        batter,
+        COUNT(DISTINCT match_id) AS matches,
+        SUM(runs_batter) AS runs,
+        COUNT(*) AS balls_faced,
+        ROUND(SUM(runs_batter) / COUNT(*) * 100, 2) AS strike_rate,
+        SUM(CASE WHEN runs_batter = 4 THEN 1 ELSE 0 END) AS fours,
+        SUM(CASE WHEN runs_batter = 6 THEN 1 ELSE 0 END) AS sixes
+    FROM 
+        ipl_deliveries
+    WHERE 
+        over_number >= 16 AND
+        batter != ''
+    GROUP BY 
+        batter
+    HAVING 
+        balls_faced >= 50 AND
+        matches >= 10
+    ORDER BY 
+        strike_rate DESC
+    LIMIT 10
+
+Query 5 : Impact of toss decisions in IPL
+
+    SELECT 
+        season,
+        toss_decision,
+        COUNT(*) AS matches,
+        SUM(CASE WHEN toss_winner = winner THEN 1 ELSE 0 END) AS toss_winner_won,
+        ROUND(SUM(CASE WHEN toss_winner = winner THEN 1 ELSE 0 END) / COUNT(*) * 100, 2) AS win_percentage
+    FROM 
+        ipl_matches
+    WHERE 
+        toss_winner != '' AND 
+        winner != '' AND
+        result != 'no result' AND
+        result != 'tie'
+    GROUP BY 
+        season, toss_decision
+    HAVING 
+        matches >= 5
+    ORDER BY 
+        season DESC, win_percentage DESC
